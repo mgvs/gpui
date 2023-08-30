@@ -20,7 +20,7 @@ impl<V, D> Default for ButtonHandlers<V, D> {
     }
 }
 
-use crate as playground;
+use crate as gpui2;
 #[derive(Element)]
 pub struct Button<V: 'static, D: 'static> {
     handlers: ButtonHandlers<V, D>,
