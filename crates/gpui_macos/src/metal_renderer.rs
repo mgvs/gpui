@@ -17,7 +17,10 @@ use image::RgbaImage;
 use core_foundation::base::TCFType;
 use core_video::{
     metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
-    pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+    // NeoCAD E-nativetex (design §2.4): the single-plane 32BGRA format the shell's
+    // IOSurface-backed present path hands to `draw_surfaces` alongside the
+    // pre-existing biplanar NV12 format.
+    pixel_buffer::{kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange},
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{
@@ -125,6 +128,11 @@ pub(crate) struct MetalRenderer {
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
+    /// NeoCAD E-nativetex (design §2.4): sibling of `surfaces_pipeline_state`
+    /// bound to the `surface_fragment_rgba` shader — samples a single-plane
+    /// `BGRA8Unorm` surface texture directly (no YCbCr matrix). Selected by
+    /// `draw_surfaces` when the surface's `CVPixelBuffer` is `32BGRA`.
+    surfaces_rgba_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -322,6 +330,18 @@ impl MetalRenderer {
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        // NeoCAD E-nativetex (design §2.4): mirrors `surfaces_pipeline_state`
+        // above but with the RGBA passthrough fragment shader; shares the
+        // `surface_vertex` stage. Same target format (`BGRA8Unorm`, the layer
+        // format) and the same `build_pipeline_state` blend setup.
+        let surfaces_rgba_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "surfaces_rgba",
+            "surface_vertex",
+            "surface_fragment_rgba",
+            MTLPixelFormat::BGRA8Unorm,
+        );
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
@@ -344,6 +364,7 @@ impl MetalRenderer {
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            surfaces_rgba_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -1475,7 +1496,11 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
+        // NeoCAD E-nativetex (design §2.4): the pipeline state is now selected
+        // per surface from its `CVPixelBuffer` pixel format (NV12 vs 32BGRA), so
+        // it is set inside the loop rather than once here. The Vertices +
+        // ViewportSize vertex bindings are format-independent (same buffer
+        // indices for both `surface_vertex` invocations) and stay hoisted.
         command_encoder.set_vertex_buffer(
             SurfaceInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1493,40 +1518,14 @@ impl MetalRenderer {
                 DevicePixels::from(surface.image_buffer.get_height() as i32),
             );
 
-            assert_eq!(
-                surface.image_buffer.get_pixel_format(),
-                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-            );
-
-            let y_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    None,
-                    MTLPixelFormat::R8Unorm,
-                    surface.image_buffer.get_width_of_plane(0),
-                    surface.image_buffer.get_height_of_plane(0),
-                    0,
-                )
-                .unwrap();
-            let cb_cr_texture = self
-                .core_video_texture_cache
-                .create_texture_from_image(
-                    surface.image_buffer.as_concrete_TypeRef(),
-                    None,
-                    MTLPixelFormat::RG8Unorm,
-                    surface.image_buffer.get_width_of_plane(1),
-                    surface.image_buffer.get_height_of_plane(1),
-                    1,
-                )
-                .unwrap();
-
             align_offset(instance_offset);
             let next_offset = *instance_offset + mem::size_of::<Surface>();
             if next_offset > instance_buffer.size {
                 return false;
             }
 
+            // Format-independent vertex-stage instance data (bounds + clip via
+            // `SurfaceBounds`, plus texture size), shared by both branches below.
             command_encoder.set_vertex_buffer(
                 SurfaceInputIndex::Surfaces as u64,
                 Some(&instance_buffer.metal_buffer),
@@ -1537,15 +1536,77 @@ impl MetalRenderer {
                 mem::size_of_val(&texture_size) as u64,
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
-            // let y_texture = y_texture.get_texture().unwrap().
-            command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
-            });
-            command_encoder.set_fragment_texture(SurfaceInputIndex::CbCrTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
-            });
+
+            let pixel_format = surface.image_buffer.get_pixel_format();
+            if pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
+                // Pre-existing biplanar YCbCr path (unchanged): Y (R8Unorm,
+                // plane 0) + CbCr (RG8Unorm, plane 1) sampled by `surface_fragment`.
+                command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
+                let y_texture = self
+                    .core_video_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        None,
+                        MTLPixelFormat::R8Unorm,
+                        surface.image_buffer.get_width_of_plane(0),
+                        surface.image_buffer.get_height_of_plane(0),
+                        0,
+                    )
+                    .unwrap();
+                let cb_cr_texture = self
+                    .core_video_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        None,
+                        MTLPixelFormat::RG8Unorm,
+                        surface.image_buffer.get_width_of_plane(1),
+                        surface.image_buffer.get_height_of_plane(1),
+                        1,
+                    )
+                    .unwrap();
+                // let y_texture = y_texture.get_texture().unwrap().
+                command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
+                    let texture = CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef());
+                    Some(metal::TextureRef::from_ptr(texture as *mut _))
+                });
+                command_encoder.set_fragment_texture(
+                    SurfaceInputIndex::CbCrTexture as u64,
+                    unsafe {
+                        let texture = CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef());
+                        Some(metal::TextureRef::from_ptr(texture as *mut _))
+                    },
+                );
+            } else if pixel_format == kCVPixelFormatType_32BGRA {
+                // NeoCAD E-nativetex (design §2.4): single-plane 32BGRA path.
+                // Build ONE `BGRA8Unorm` `CVMetalTexture` over the IOSurface and
+                // bind it to the same fragment-texture slot the Y plane used
+                // (`YTexture`); `surface_fragment_rgba` samples it directly.
+                // Mirrors the Y-plane creation above (plane 0, full dimensions).
+                command_encoder.set_render_pipeline_state(&self.surfaces_rgba_pipeline_state);
+                let color_texture = self
+                    .core_video_texture_cache
+                    .create_texture_from_image(
+                        surface.image_buffer.as_concrete_TypeRef(),
+                        None,
+                        MTLPixelFormat::BGRA8Unorm,
+                        surface.image_buffer.get_width(),
+                        surface.image_buffer.get_height(),
+                        0,
+                    )
+                    .unwrap();
+                command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
+                    let texture = CVMetalTextureGetTexture(color_texture.as_concrete_TypeRef());
+                    Some(metal::TextureRef::from_ptr(texture as *mut _))
+                });
+            } else {
+                panic!(
+                    "gpui: unsupported surface CVPixelBuffer format {:#010x}; \
+                     expected NV12 ({:#010x}) or 32BGRA ({:#010x})",
+                    pixel_format,
+                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                    kCVPixelFormatType_32BGRA,
+                );
+            }
 
             unsafe {
                 let buffer_contents = (instance_buffer.metal_buffer.contents() as *mut u8)

@@ -899,6 +899,21 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
   return ycbcrToRGBTransform * ycbcr;
 }
 
+// NeoCAD E-nativetex (design §2.4): RGBA passthrough sibling of
+// `surface_fragment`. Shares `surface_vertex`; samples a single-plane surface
+// texture bound at the YTexture slot and returns it directly. The texture is a
+// `BGRA8Unorm` view over an IOSurface — Metal applies the BGRA->RGBA channel
+// swizzle at sample time from the texture's pixel format, exactly as the
+// polychrome-atlas sprite pass does, so no manual reorder is needed. The shell
+// renders opaque frames (alpha == 1), matching the surface pipeline's straight
+// alpha blend.
+fragment float4 surface_fragment_rgba(
+    SurfaceFragmentInput input [[stage_in]],
+    texture2d<float> color_texture [[texture(SurfaceInputIndex_YTexture)]]) {
+  constexpr sampler texture_sampler(mag_filter::linear, min_filter::linear);
+  return color_texture.sample(texture_sampler, input.texture_position);
+}
+
 float4 hsla_to_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;
