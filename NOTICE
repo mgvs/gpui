@@ -1,0 +1,18 @@
+gpui (MGVS fork)
+Copyright 2026 MGVS
+
+This product includes software developed by Zed Industries, Inc.:
+
+  gpui — https://github.com/zed-industries/zed
+  Licensed under the Apache License, Version 2.0.
+
+This distribution is a fork of gpui at upstream revision
+c545fb67d0ce13e335bff76f7c08986000333f2c.
+
+Modifications made by MGVS (Oleksandr Zhabotynskyi <alexlp@mgvs.org>):
+  - Added a single-plane 32BGRA external-texture present path to the
+    macOS/Metal backend (crates/gpui_macos: metal_renderer.rs, metal_atlas.rs,
+    shaders.metal) enabling zero-copy IOSurface/CVPixelBuffer presentation.
+
+The original Apache-2.0 license and notices are retained in each crate's
+LICENSE-APACHE file, as required by Apache License 2.0 Section 4.
