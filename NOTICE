@@ -1,0 +1,27 @@
+gpui (MGVS fork)
+Copyright 2026 MGVS
+
+This product includes software developed by Zed Industries, Inc.:
+
+  gpui — https://github.com/zed-industries/zed
+  Licensed under the Apache License, Version 2.0.
+
+This distribution is a path-filtered fork of the Zed monorepo, carrying the
+gpui crates with their upstream history (see README.md and
+scripts/upstream-paths.txt). Branch `main` is based on upstream commit
+4b7369481dcf36f22ff8f813d411e1d296aebe57, whose tree over every file kept here
+is identical to the originally pinned revision
+c545fb67d0ce13e335bff76f7c08986000333f2c.
+
+Modifications made by MGVS (Oleksandr Zhabotynskyi <alexlp@mgvs.org>):
+  - Added a single-plane 32BGRA external-texture present path to the
+    macOS/Metal backend, enabling zero-copy IOSurface/CVPixelBuffer
+    presentation:
+      crates/gpui_macos/src/metal_renderer.rs
+      crates/gpui_macos/src/shaders.metal
+  - Pruned the inherited workspace manifest to the crates carried here
+    (Cargo.toml), and added fork documentation and upstream sync tooling
+    (README.md, NOTICE, scripts/).
+
+The original Apache-2.0 license and notices are retained in each crate's
+LICENSE-APACHE file, as required by Apache License 2.0 Section 4.
