@@ -1,0 +1,39 @@
+# Paths extracted from zed-industries/zed into this fork.
+#
+# THIS FILE IS PART OF THE FORK'S IDENTITY. `scripts/sync-upstream.sh` feeds
+# every line below to `git filter-repo --path`, and the rewritten commit SHAs
+# are a function of this list. Editing it re-derives DIFFERENT SHAs for the
+# whole history, which no longer merge with what is already published — the
+# sync script therefore refuses to advance `upstream` when that happens.
+#
+# Add a path only together with a deliberate, documented re-import.
+
+Cargo.toml
+LICENSE-APACHE
+LICENSE-GPL
+assets/fonts
+tooling/perf
+
+crates/collections
+crates/gpui
+crates/gpui_linux
+crates/gpui_macos
+crates/gpui_macros
+crates/gpui_platform
+crates/gpui_shared_string
+crates/gpui_util
+crates/gpui_web
+crates/gpui_wgpu
+crates/gpui_windows
+crates/http_client
+crates/http_client_tls
+crates/media
+crates/refineable
+crates/reqwest_client
+crates/scheduler
+crates/sum_tree
+crates/util
+crates/util_macros
+crates/zlog
+crates/ztracing
+crates/ztracing_macro
