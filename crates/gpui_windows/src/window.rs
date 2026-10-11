@@ -652,6 +652,22 @@ impl PlatformWindow for WindowsWindow {
         logical_point(point.x as f32, point.y as f32, scale_factor)
     }
 
+    fn set_mouse_position(
+        &self,
+        position: Point<Pixels>,
+    ) -> std::result::Result<(), SetMousePositionError> {
+        // The inverse of `mouse_position`: logical client coordinates to physical
+        // client coordinates, then to physical screen coordinates.
+        let mut point = physical_point(position, self.scale_factor());
+        unsafe {
+            ClientToScreen(self.0.hwnd, &mut point)
+                .ok()
+                .context("unable to convert the pointer position to screen coordinates")?;
+            SetCursorPos(point.x, point.y).context("unable to set cursor position")?;
+        }
+        Ok(())
+    }
+
     fn modifiers(&self) -> Modifiers {
         current_modifiers()
     }

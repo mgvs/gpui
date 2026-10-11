@@ -155,6 +155,17 @@ pub(crate) fn logical_point(x: f32, y: f32, scale_factor: f32) -> Point<Pixels> 
     }
 }
 
+/// The inverse of [`logical_point`]: converts a point in logical pixels to the
+/// nearest physical pixel, the unit of client and screen coordinates in a
+/// per-monitor DPI aware process.
+#[inline]
+pub(crate) fn physical_point(point: Point<Pixels>, scale_factor: f32) -> POINT {
+    POINT {
+        x: (point.x.as_f32() * scale_factor).round() as i32,
+        y: (point.y.as_f32() * scale_factor).round() as i32,
+    }
+}
+
 // https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
 #[inline]
 pub(crate) fn system_appearance() -> Result<WindowAppearance> {
@@ -188,4 +199,42 @@ where
             .log_err();
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{logical_point, physical_point};
+    use gpui::{point, px};
+    use windows::Win32::Foundation::POINT;
+
+    #[test]
+    fn physical_point_scales_and_rounds() {
+        let position = point(px(10.), px(20.));
+        assert_eq!(physical_point(position, 1.0), POINT { x: 10, y: 20 });
+        assert_eq!(physical_point(position, 1.5), POINT { x: 15, y: 30 });
+        assert_eq!(physical_point(position, 2.0), POINT { x: 20, y: 40 });
+
+        // 10.4 * 1.25 = 13.0 and 10.75 * 1.25 = 13.4375, both nearest to 13.
+        let fractional = point(px(10.4), px(10.75));
+        assert_eq!(physical_point(fractional, 1.25), POINT { x: 13, y: 13 });
+        // 7.3 * 1.75 = 12.775
+        assert_eq!(
+            physical_point(point(px(7.3), px(-7.3)), 1.75),
+            POINT { x: 13, y: -13 }
+        );
+    }
+
+    #[test]
+    fn physical_point_inverts_logical_point() {
+        for scale_factor in [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 3.0] {
+            for (x, y) in [(0, 0), (1, 1), (17, 433), (1919, 1079), (-250, 3840)] {
+                let logical = logical_point(x as f32, y as f32, scale_factor);
+                assert_eq!(
+                    physical_point(logical, scale_factor),
+                    POINT { x, y },
+                    "scale factor {scale_factor}"
+                );
+            }
+        }
+    }
 }

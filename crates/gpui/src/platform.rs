@@ -617,6 +617,19 @@ pub struct RequestFrameOptions {
     pub force_render: bool,
 }
 
+/// Why [`PlatformWindow::set_mouse_position`] (and so `Window::set_mouse_position`)
+/// did not move the mouse pointer.
+#[derive(Debug, thiserror::Error)]
+pub enum SetMousePositionError {
+    /// The platform gives applications no way to move the pointer. This is the
+    /// case on Wayland, which has no protocol for it, and in a web browser.
+    #[error("moving the mouse pointer is not supported on this platform")]
+    Unsupported,
+    /// The platform can move the pointer, but the request failed.
+    #[error(transparent)]
+    Platform(#[from] anyhow::Error),
+}
+
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
@@ -628,6 +641,18 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
+    /// Moves the mouse pointer to `position`, given in the same space as
+    /// [`PlatformWindow::mouse_position`]: logical pixels relative to the top-left
+    /// corner of the window's content area.
+    ///
+    /// The default implementation moves nothing and returns
+    /// [`SetMousePositionError::Unsupported`].
+    fn set_mouse_position(
+        &self,
+        _position: Point<Pixels>,
+    ) -> std::result::Result<(), SetMousePositionError> {
+        Err(SetMousePositionError::Unsupported)
+    }
     fn modifiers(&self) -> Modifiers;
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);

@@ -28,9 +28,9 @@ use gpui::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
-    px, size,
+    PromptLevel, RequestFrameOptions, SetMousePositionError, SharedString, Size, SystemWindowTab,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
+    WindowParams, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -38,7 +38,7 @@ use image::RgbaImage;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::base::CFEqual;
 use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
-use core_graphics::display::{CGDirectDisplayID, CGRect};
+use core_graphics::display::{CGDirectDisplayID, CGDisplay, CGPoint, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
 use gpui_util::ResultExt;
@@ -315,6 +315,31 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
         // macOS screen coordinates are relative to bottom left
         window_height - px(position.y as f32),
     )
+}
+
+/// Converts a point in window coordinates, as [`convert_mouse_position`] produces
+/// them (logical pixels from the top-left corner of the content view), to Quartz
+/// global display coordinates: points from the top-left corner of the primary
+/// display, the space `CGWarpMouseCursorPosition` takes.
+///
+/// `window_origin` is the bottom-left corner of the window frame in Cocoa screen
+/// coordinates, whose origin is the bottom-left corner of the primary display.
+/// `primary_display_height` is that display's height in points.
+fn window_point_to_global_display(
+    position: Point<Pixels>,
+    content_height: Pixels,
+    window_origin: NSPoint,
+    primary_display_height: f64,
+) -> CGPoint {
+    // The inverse of `convert_mouse_position`: window base coordinates, y up.
+    let base_x = position.x.as_f32() as f64;
+    let base_y = (content_height - position.y).as_f32() as f64;
+    // Window base coordinates to Cocoa screen coordinates.
+    let screen_x = window_origin.x + base_x;
+    let screen_y = window_origin.y + base_y;
+    // Cocoa screen coordinates (y up from the bottom of the primary display) to
+    // global display coordinates (y down from its top).
+    CGPoint::new(screen_x, primary_display_height - screen_y)
 }
 
 /// Stores the cursor style on the active GPUI window and invalidates its cursor rects.
@@ -1309,6 +1334,36 @@ impl PlatformWindow for MacWindow {
                 .mouseLocationOutsideOfEventStream()
         };
         convert_mouse_position(position, self.content_size().height)
+    }
+
+    fn set_mouse_position(
+        &self,
+        position: Point<Pixels>,
+    ) -> std::result::Result<(), SetMousePositionError> {
+        let (window_origin, content_height) = {
+            let this = self.0.lock();
+            let frame = unsafe { NSWindow::frame(this.native_window) };
+            (frame.origin, this.content_size().height)
+        };
+        // The main display is the one at the origin of the global display space;
+        // Cocoa screen coordinates are measured from its bottom-left corner.
+        let primary_display_height = CGDisplay::main().bounds().size.height;
+        let target = window_point_to_global_display(
+            position,
+            content_height,
+            window_origin,
+            primary_display_height,
+        );
+        CGDisplay::warp_mouse_cursor_position(target).map_err(|error| {
+            anyhow::anyhow!("CGWarpMouseCursorPosition failed with error {error}")
+        })?;
+        // After a warp the system suppresses local mouse events for a short
+        // interval (0.25 s by default), so the pointer briefly ignores the mouse.
+        // Reassociating the mouse with the cursor ends that interval at once.
+        CGDisplay::associate_mouse_and_mouse_cursor_position(true).map_err(|error| {
+            anyhow::anyhow!("CGAssociateMouseAndMouseCursorPosition failed with error {error}")
+        })?;
+        Ok(())
     }
 
     fn modifiers(&self) -> Modifiers {
@@ -3150,6 +3205,77 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
             drop(lock);
             callback();
             window_state.lock().toggle_tab_bar_callback = Some(callback);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PRIMARY_DISPLAY_HEIGHT: f64 = 900.;
+
+    #[test]
+    fn window_point_to_global_display_on_the_primary_display() {
+        // A window whose frame starts 100 pt from the left and 200 pt from the bottom
+        // of a 900 pt tall primary display, with a 600 pt tall content view: the top
+        // of its content is 900 - (200 + 600) = 100 pt from the top of the display.
+        let origin = NSPoint::new(100., 200.);
+        let content_height = px(600.);
+
+        let top_left = window_point_to_global_display(
+            point(px(0.), px(0.)),
+            content_height,
+            origin,
+            PRIMARY_DISPLAY_HEIGHT,
+        );
+        assert_eq!((top_left.x, top_left.y), (100., 100.));
+
+        let bottom = window_point_to_global_display(
+            point(px(50.5), px(600.)),
+            content_height,
+            origin,
+            PRIMARY_DISPLAY_HEIGHT,
+        );
+        assert_eq!((bottom.x, bottom.y), (150.5, 700.));
+    }
+
+    #[test]
+    fn window_point_to_global_display_above_and_left_of_the_primary_display() {
+        // A display above and to the left of the primary display has a negative x
+        // and a Cocoa y beyond the primary display's height, so a negative global y.
+        let origin = NSPoint::new(-1200., 1000.);
+        let target = window_point_to_global_display(
+            point(px(10.), px(20.)),
+            px(500.),
+            origin,
+            PRIMARY_DISPLAY_HEIGHT,
+        );
+        assert_eq!((target.x, target.y), (-1190., -580.));
+    }
+
+    #[test]
+    fn window_point_to_global_display_inverts_convert_mouse_position() {
+        let origin = NSPoint::new(320., 75.);
+        let content_height = px(480.);
+        for position in [
+            point(px(0.), px(0.)),
+            point(px(12.25), px(400.5)),
+            point(px(639.), px(479.)),
+        ] {
+            let global = window_point_to_global_display(
+                position,
+                content_height,
+                origin,
+                PRIMARY_DISPLAY_HEIGHT,
+            );
+            // Back the way `mouse_position` reads it: global display to Cocoa screen
+            // coordinates, then to window base coordinates.
+            let base = NSPoint::new(
+                global.x - origin.x,
+                PRIMARY_DISPLAY_HEIGHT - global.y - origin.y,
+            );
+            assert_eq!(convert_mouse_position(base, content_height), position);
         }
     }
 }

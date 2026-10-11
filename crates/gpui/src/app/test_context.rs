@@ -762,6 +762,28 @@ impl VisualTestContext {
             .clone()
     }
 
+    /// Every position passed to `Window::set_mouse_position` on this window, oldest
+    /// first, including calls that were refused.
+    pub fn set_mouse_position_calls(&mut self) -> Vec<Point<Pixels>> {
+        self.cx
+            .test_window(self.window)
+            .0
+            .lock()
+            .set_mouse_position_calls
+            .clone()
+    }
+
+    /// Makes `Window::set_mouse_position` on this window return
+    /// `SetMousePositionError::Unsupported`, as it does on a platform that cannot move
+    /// the pointer. Calls are still recorded.
+    pub fn simulate_set_mouse_position_unsupported(&mut self, unsupported: bool) {
+        self.cx
+            .test_window(self.window)
+            .0
+            .lock()
+            .set_mouse_position_unsupported = unsupported;
+    }
+
     /// Simulate a sequence of keystrokes `cx.simulate_keystrokes("cmd-p escape")`
     /// Automatically runs until parked.
     pub fn simulate_keystrokes(&mut self, keystrokes: &str) {
@@ -1115,7 +1137,7 @@ impl AnyWindowHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::{PathPromptOptions, TestAppContext};
+    use crate::{PathPromptOptions, SetMousePositionError, TestAppContext, point, px};
     use std::path::PathBuf;
 
     #[gpui::test]
@@ -1161,5 +1183,38 @@ mod tests {
 
         let response = receiver.await.unwrap().unwrap();
         assert_eq!(response, None);
+    }
+
+    #[gpui::test]
+    fn test_set_mouse_position_is_recorded(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let first = point(px(12.5), px(40.));
+        let second = point(px(-3.), px(1024.25));
+
+        let reported = cx.update(|window, _| {
+            window.set_mouse_position(first).unwrap();
+            window.set_mouse_position(second).unwrap();
+            window.mouse_position()
+        });
+
+        assert_eq!(cx.set_mouse_position_calls(), vec![first, second]);
+        assert_eq!(reported, second);
+    }
+
+    #[gpui::test]
+    fn test_set_mouse_position_unsupported(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let before = cx.update(|window, _| window.mouse_position());
+        let target = point(px(30.), px(60.));
+        cx.simulate_set_mouse_position_unsupported(true);
+
+        let (result, after) = cx.update(|window, _| {
+            let result = window.set_mouse_position(target);
+            (result, window.mouse_position())
+        });
+
+        assert!(matches!(result, Err(SetMousePositionError::Unsupported)));
+        assert_eq!(after, before);
+        assert_eq!(cx.set_mouse_position_calls(), vec![target]);
     }
 }

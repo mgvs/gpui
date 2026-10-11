@@ -12,13 +12,13 @@ use crate::{
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
     Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, profiler, px, rems, size,
-    transparent_black,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, SetMousePositionError, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, profiler, px, rems, size, transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -2579,6 +2579,32 @@ impl Window {
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
+    }
+
+    /// Moves the mouse pointer to `position`, in the same space as
+    /// [`Window::mouse_position`]: logical pixels relative to the top-left corner of
+    /// the window's content area. A position outside the content area is passed to
+    /// the platform unchanged; the system keeps the pointer on a screen.
+    ///
+    /// When the pointer moves, [`Window::mouse_position`] reports `position` at once
+    /// and the window is refreshed, so hover state follows the pointer on the next
+    /// frame. No mouse-move event is synthesized: Windows and X11 normally report
+    /// the move as a mouse-move event of their own, macOS does not.
+    ///
+    /// Platform support:
+    /// - macOS, Windows and X11 move the pointer.
+    /// - Wayland and the web platform return [`SetMousePositionError::Unsupported`]:
+    ///   neither lets an application move the pointer.
+    /// - The test platform records each call; see
+    ///   `VisualTestContext::set_mouse_position_calls`.
+    pub fn set_mouse_position(
+        &mut self,
+        position: Point<Pixels>,
+    ) -> std::result::Result<(), SetMousePositionError> {
+        self.platform_window.set_mouse_position(position)?;
+        self.mouse_position = position;
+        self.refresh();
+        Ok(())
     }
 
     /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up

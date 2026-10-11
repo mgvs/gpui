@@ -18,8 +18,8 @@ use gpui::{
     AtlasKey, AtlasTextureId, AtlasTile, Bounds, Capslock, DevicePixels, DispatchEventResult,
     DisplayId, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    Scene, Size, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowParams, px,
+    Scene, SetMousePositionError, Size, TileId, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowParams, px,
 };
 
 #[derive(Debug)]
@@ -56,6 +56,7 @@ struct HeadlessWindowState {
     input_handler: Option<PlatformInputHandler>,
     title: Option<String>,
     is_fullscreen: bool,
+    mouse_position: Point<Pixels>,
 }
 
 pub(crate) struct HeadlessWindow(Rc<RefCell<HeadlessWindowState>>);
@@ -85,6 +86,7 @@ impl HeadlessWindow {
             input_handler: None,
             title: None,
             is_fullscreen: false,
+            mouse_position: Point::default(),
         })))
     }
 }
@@ -123,7 +125,14 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::default()
+        self.0.borrow().mouse_position
+    }
+
+    fn set_mouse_position(&self, position: Point<Pixels>) -> Result<(), SetMousePositionError> {
+        // There is no pointer to move; keep the position so `mouse_position`
+        // reports it, as it would after a move on a real display.
+        self.0.borrow_mut().mouse_position = position;
+        Ok(())
     }
 
     fn modifiers(&self) -> Modifiers {

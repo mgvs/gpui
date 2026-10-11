@@ -5,9 +5,9 @@ use crate::linux::X11ClientStatePtr;
 use gpui::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, px,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene,
+    SetMousePositionError, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -349,6 +349,16 @@ impl rwh::HasDisplayHandle for X11Window {
         let handle = rwh::XcbDisplayHandle::new(Some(non_zero), screen_id);
         Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
+}
+
+/// Converts a point in window coordinates (logical pixels from the top-left corner of
+/// the window) to the device pixels X11 requests take, the inverse of how input
+/// events are scaled. X11 coordinates are 16-bit; values beyond that range saturate.
+fn window_point_to_device(position: Point<Pixels>, scale_factor: f32) -> (i16, i16) {
+    (
+        (position.x.as_f32() * scale_factor).round() as i16,
+        (position.y.as_f32() * scale_factor).round() as i16,
+    )
 }
 
 pub(crate) fn xcb_flush(xcb: &XCBConnection) {
@@ -1414,6 +1424,23 @@ impl PlatformWindow for X11Window {
         })
     }
 
+    fn set_mouse_position(
+        &self,
+        position: Point<Pixels>,
+    ) -> std::result::Result<(), SetMousePositionError> {
+        let scale_factor = self.0.state.borrow().scale_factor;
+        let (x, y) = window_point_to_device(position, scale_factor);
+        // With no source window, the pointer moves to (x, y) relative to the
+        // destination window's origin wherever it currently is.
+        check_reply(
+            || "X11 WarpPointer failed.",
+            self.0
+                .xcb
+                .warp_pointer(x11rb::NONE, self.0.x_window, 0, 0, 0, 0, x, y),
+        )?;
+        Ok(())
+    }
+
     fn modifiers(&self) -> Modifiers {
         self.0
             .state
@@ -1970,5 +1997,40 @@ struct TrivialDeactivationHandler {
 impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     fn deactivate_accessibility(&mut self) {
         (self.callback)();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::point;
+
+    #[test]
+    fn window_point_to_device_scales_and_rounds() {
+        assert_eq!(
+            window_point_to_device(point(px(10.), px(20.)), 1.0),
+            (10, 20)
+        );
+        assert_eq!(
+            window_point_to_device(point(px(10.), px(20.)), 2.0),
+            (20, 40)
+        );
+        // 10.3 * 1.5 = 15.45, 10.4 * 1.5 = 15.6
+        assert_eq!(
+            window_point_to_device(point(px(10.3), px(10.4)), 1.5),
+            (15, 16)
+        );
+        assert_eq!(
+            window_point_to_device(point(px(-4.), px(0.)), 1.25),
+            (-5, 0)
+        );
+    }
+
+    #[test]
+    fn window_point_to_device_saturates_at_the_x11_range() {
+        assert_eq!(
+            window_point_to_device(point(px(40000.), px(-40000.)), 1.0),
+            (i16::MAX, i16::MIN)
+        );
     }
 }

@@ -32,10 +32,10 @@ use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, GpuSpecs, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
-    size,
+    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, SetMousePositionError, Size,
+    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowControls, WindowDecorations, WindowKind, WindowParams,
+    layer_shell::LayerShellNotSupportedError, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
@@ -1246,6 +1246,17 @@ impl PlatformWindow for WaylandWindow {
             .borrow()
             .mouse_location
             .unwrap_or_default()
+    }
+
+    fn set_mouse_position(
+        &self,
+        _position: Point<Pixels>,
+    ) -> std::result::Result<(), SetMousePositionError> {
+        // Wayland has no request that lets a client move the pointer. The closest,
+        // the pointer-constraints protocol's cursor position hint, applies only to
+        // a locked pointer, and the compositor may or may not honour it when the
+        // lock ends.
+        Err(SetMousePositionError::Unsupported)
     }
 
     fn modifiers(&self) -> Modifiers {

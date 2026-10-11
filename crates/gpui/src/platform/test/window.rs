@@ -2,8 +2,8 @@ use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
+    PromptButton, RequestFrameOptions, Scene, SetMousePositionError, Size, TestPlatform, TileId,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
 use collections::HashMap;
 use gpui_util::ResultExt as _;
@@ -35,6 +35,9 @@ pub(crate) struct TestWindowState {
     moved_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
+    pub(crate) mouse_position: Point<Pixels>,
+    pub(crate) set_mouse_position_calls: Vec<Point<Pixels>>,
+    pub(crate) set_mouse_position_unsupported: bool,
 }
 
 #[derive(Clone)]
@@ -87,6 +90,9 @@ impl TestWindow {
             moved_callback: None,
             input_handler: None,
             is_fullscreen: false,
+            mouse_position: Point::default(),
+            set_mouse_position_calls: Vec::new(),
+            set_mouse_position_unsupported: false,
         })))
     }
 
@@ -160,7 +166,17 @@ impl PlatformWindow for TestWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::default()
+        self.0.lock().mouse_position
+    }
+
+    fn set_mouse_position(&self, position: Point<Pixels>) -> Result<(), SetMousePositionError> {
+        let mut lock = self.0.lock();
+        lock.set_mouse_position_calls.push(position);
+        if lock.set_mouse_position_unsupported {
+            return Err(SetMousePositionError::Unsupported);
+        }
+        lock.mouse_position = position;
+        Ok(())
     }
 
     fn modifiers(&self) -> crate::Modifiers {
