@@ -17,7 +17,7 @@ use image::RgbaImage;
 use core_foundation::base::TCFType;
 use core_video::{
     metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
-    // NeoCAD E-nativetex (design §2.4): the single-plane 32BGRA format the shell's
+    // The single-plane 32BGRA format a host's
     // IOSurface-backed present path hands to `draw_surfaces` alongside the
     // pre-existing biplanar NV12 format.
     pixel_buffer::{kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange},
@@ -128,7 +128,7 @@ pub(crate) struct MetalRenderer {
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
-    /// NeoCAD E-nativetex (design §2.4): sibling of `surfaces_pipeline_state`
+    /// Sibling of `surfaces_pipeline_state`
     /// bound to the `surface_fragment_rgba` shader — samples a single-plane
     /// `BGRA8Unorm` surface texture directly (no YCbCr matrix). Selected by
     /// `draw_surfaces` when the surface's `CVPixelBuffer` is `32BGRA`.
@@ -330,7 +330,7 @@ impl MetalRenderer {
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
-        // NeoCAD E-nativetex (design §2.4): mirrors `surfaces_pipeline_state`
+        // Mirrors `surfaces_pipeline_state`
         // above but with the RGBA passthrough fragment shader; shares the
         // `surface_vertex` stage. Same target format (`BGRA8Unorm`, the layer
         // format) and the same `build_pipeline_state` blend setup.
@@ -1496,7 +1496,7 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        // NeoCAD E-nativetex (design §2.4): the pipeline state is now selected
+        // The pipeline state is now selected
         // per surface from its `CVPixelBuffer` pixel format (NV12 vs 32BGRA), so
         // it is set inside the loop rather than once here. The Vertices +
         // ViewportSize vertex bindings are format-independent (same buffer
@@ -1577,7 +1577,7 @@ impl MetalRenderer {
                     },
                 );
             } else if pixel_format == kCVPixelFormatType_32BGRA {
-                // NeoCAD E-nativetex (design §2.4): single-plane 32BGRA path.
+                // Single-plane 32BGRA path.
                 // Build ONE `BGRA8Unorm` `CVMetalTexture` over the IOSurface and
                 // bind it to the same fragment-texture slot the Y plane used
                 // (`YTexture`); `surface_fragment_rgba` samples it directly.
